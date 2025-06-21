@@ -5,7 +5,22 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-scope = "user-top-read user-read-recently-played playlist-read-private user-read-private"
+scope = (
+    "user-top-read "
+    "user-read-recently-played "
+    "user-read-currently-playing "
+    "user-read-playback-state "
+    "user-modify-playback-state "
+    "playlist-read-private "
+    "playlist-modify-private "
+    "playlist-modify-public "
+    "user-library-read "
+    "user-library-modify "
+    "user-follow-read "
+    "user-follow-modify "
+    "user-read-private"
+)
+
 
 sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
     client_id=os.getenv("SPOTIPY_CLIENT_ID"),
