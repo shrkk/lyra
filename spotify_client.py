@@ -21,10 +21,4 @@ scope = (
     "user-read-private"
 )
 
-
-sp = spotipy.Spotify(auth_manager=SpotifyOAuth(
-    client_id=os.getenv("SPOTIPY_CLIENT_ID"),
-    client_secret=os.getenv("SPOTIPY_CLIENT_SECRET"),
-    redirect_uri=os.getenv("SPOTIPY_REDIRECT_URI"),
-    scope=scope
-))
+# The global 'sp' instance is removed to allow for per-request authentication.

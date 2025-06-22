@@ -12,10 +12,17 @@ def handle_lyra():
 
 @app.route("/lyra/chat", methods=["POST"])
 def handle_chat():
+    auth_header = request.headers.get("Authorization")
+    if not auth_header or not auth_header.startswith("Bearer "):
+        return jsonify({"error": "Authorization token is missing or invalid."}), 401
+    
+    token = auth_header.split(" ")[1]
+    
     data = request.json
     user_message = data.get("message", "")
     history = data.get("history", [])
-    response = llm_respond_with_gemini(user_message, history=history)
+    
+    response = llm_respond_with_gemini(user_message, history=history, token=token)
     return jsonify(response)
 
 @app.route("/lyra/recommend", methods=["POST"])

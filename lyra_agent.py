@@ -7,8 +7,14 @@ import unicodedata
 import string
 import json
 import google.generativeai as genai
+import spotipy
 
-def summarize_taste():
+def get_spotify_client(token):
+    """Creates a Spotipy client for a given user token."""
+    return spotipy.Spotify(auth=token)
+
+def summarize_taste(token):
+    sp = get_spotify_client(token)
     top_artists = sp.current_user_top_artists(limit=5, time_range='medium_term')
     names = [artist['name'] for artist in top_artists['items']]
     genres = [genre for artist in top_artists['items'] for genre in artist['genres']]
@@ -48,7 +54,8 @@ def get_profile_visualization():
         "genre_breakdown": genre_freq
     }
 
-def get_full_spotify_profile():
+def get_full_spotify_profile(token):
+    sp = get_spotify_client(token)
     try:
         profile = sp.current_user()
         display_name = profile.get('display_name', 'Unknown')
@@ -101,7 +108,7 @@ def normalize_name(name):
     name = name.translate(str.maketrans('', '', string.punctuation))
     return name.strip()
 
-def validate_and_correct_tracks_with_spotify(tracks, user_country=None):
+def validate_and_correct_tracks_with_spotify(tracks, token, user_country=None):
     """
     Validates tracks against Spotify and corrects artist names if necessary.
     Returns a list of tuples: (corrected_track_string, spotify_track_id) for valid tracks.
@@ -109,6 +116,7 @@ def validate_and_correct_tracks_with_spotify(tracks, user_country=None):
     This version STRICTLY validates artist matches, only accepting results
     where the artist from Spotify matches the requested artist.
     """
+    sp = get_spotify_client(token)
     corrected_tracks = []
     if not tracks:
         return corrected_tracks
@@ -177,9 +185,9 @@ def extract_json_from_response(response_text):
     except json.JSONDecodeError:
         return None, response_text
 
-def fallback_spotify_recs(user_message, known_artists, known_tracks):
-    # Use Spotify recommendations API, avoiding known tracks/artists
-    taste = get_full_spotify_profile()
+def fallback_spotify_recs(token, user_message, known_artists, known_tracks):
+    sp = get_spotify_client(token)
+    taste = get_full_spotify_profile(token)
     # Use top genre or artist as seed
     top_artists, _ = get_known_artists_tracks()
     seed_artists = top_artists[:2] if top_artists else None
@@ -211,12 +219,13 @@ def extract_target_features_from_message(message):
         features['energy'] = 0.3
     return features
 
-def filter_tracks_by_features(corrected_tracks_with_ids, target_features=None):
+def filter_tracks_by_features(corrected_tracks_with_ids, token, target_features=None):
     """
     corrected_tracks_with_ids: list of (track_string, track_id) tuples
     target_features: dict of {feature_name: value}
     Returns: list of (track_string, track_id) tuples sorted by similarity
     """
+    sp = get_spotify_client(token)
     if not corrected_tracks_with_ids or not target_features:
         return corrected_tracks_with_ids
     
@@ -245,14 +254,14 @@ def filter_tracks_by_features(corrected_tracks_with_ids, target_features=None):
     filtered.sort(reverse=True)
     return [t_info for _, t_info in filtered]
 
-def llm_respond_with_gemini(message, history=None):
+def llm_respond_with_gemini(message, history, token):
     api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
         return {"response": "Google API key not set in .env."}
     genai.configure(api_key=api_key)
 
     model = genai.GenerativeModel('gemini-1.5-flash')
-    spotify_context = get_full_spotify_profile()
+    spotify_context = get_full_spotify_profile(token)
     
     system_prompt = (
         "You are Lyra, a deeply insightful music companion. Your main goal is to help users discover music on Spotify. "
@@ -298,17 +307,18 @@ def llm_respond_with_gemini(message, history=None):
                     tracks_to_validate.append(f"{rec['track']} by {rec['artist']}")
 
         if tracks_to_validate:
-            final_tracks_with_ids = validate_and_correct_tracks_with_spotify(tracks_to_validate)
+            final_tracks_with_ids = validate_and_correct_tracks_with_spotify(tracks_to_validate, token)
             
             if final_tracks_with_ids:
                 target_features = extract_target_features_from_message(message)
                 if target_features:
-                    final_tracks_with_ids = filter_tracks_by_features(final_tracks_with_ids, target_features)
+                    final_tracks_with_ids = filter_tracks_by_features(final_tracks_with_ids, token, target_features)
 
                 tracks_for_embed = [{"name": name, "id": id} for name, id in final_tracks_with_ids]
                 return {"response": conversational_response, "tracks": tracks_for_embed}
 
-        return {"response": conversational_response}
+        fallback_tracks = fallback_spotify_recs(token, message, [], [])
+        return {"response": conversational_response, "fallback_tracks": fallback_tracks}
             
     except Exception as e:
         return {"response": f"Error calling Gemini API: {e}"}

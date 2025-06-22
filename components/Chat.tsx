@@ -21,26 +21,40 @@ interface Message {
 }
 
 export default function Chat() {
-  const [messages, setMessages] = useState<Message[]>([
-    {
-      id: '1',
-      text: "Hi, I'm Lyra 🎶 Your personal music companion. Ask me anything about your taste, favorite genres, or what to listen to next!",
-      isUser: false,
-      timestamp: new Date(),
-    },
-  ]);
+  const [messages, setMessages] = useState<Message[]>([]);
   const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const [user, setUser] = useState<any>(null);
+  const [initialMessageSent, setInitialMessageSent] = useState(false);
+
+  useEffect(() => {
+    supabase.auth.onAuthStateChange((event, session) => {
+      setUser(session?.user ?? null);
+    });
+  }, []);
+
+  useEffect(() => {
+    if (user && !initialMessageSent) {
+      setMessages([
+        {
+          id: '1',
+          text: `Hi, ${user.user_metadata?.full_name || 'there'} 🎶 I'm Lyra. Ask me anything about your music taste!`,
+          isUser: false,
+          timestamp: new Date(),
+        },
+      ]);
+      setInitialMessageSent(true);
+    } else if (!user) {
+      setMessages([]);
+      setInitialMessageSent(false);
+    }
+  }, [user, initialMessageSent]);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   };
 
-  useEffect(() => {
-    scrollToBottom();
-    supabase.auth.getUser().then(({ data }) => setUser(data?.user));
-  }, [messages, isTyping]);
+  useEffect(scrollToBottom, [messages, isTyping]);
 
   const [inputValue, setInputValue] = useState('');
 
@@ -72,11 +86,27 @@ export default function Chat() {
     setMessages(prev => [...prev, userMessage]);
     setIsTyping(true);
 
+    const { data: { session } } = await supabase.auth.getSession();
+    const accessToken = session?.provider_token;
+
+    if (!accessToken) {
+        const errorMessage: Message = {
+          id: (Date.now() + 1).toString(),
+          text: "Your session has expired. Please sign in again.",
+          isUser: false,
+          timestamp: new Date(),
+        };
+        setMessages(prev => [...prev, errorMessage]);
+        setIsTyping(false);
+        return;
+    }
+
     try {
       const response = await fetch('http://localhost:8888/lyra/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
+          'Authorization': `Bearer ${accessToken}`,
         },
         body: JSON.stringify({ 
           message: text,
