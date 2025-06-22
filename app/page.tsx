@@ -10,6 +10,7 @@ import {
 } from '@tabler/icons-react';
 import { SparklesCore } from '@/components/ui/sparkles';
 import Image from 'next/image';
+import UserProfile from '@/components/UserProfile';
 
 export default function Home() {
   const navItems = [
@@ -25,7 +26,7 @@ export default function Home() {
     },
     {
       title: 'Player',
-      href: '/player',
+      href: 'https://open.spotify.com',
       icon: <Image src="/spotify.png" alt="Player" width={24} height={24} className="h-5.5 w-6" />,
     },
     {
@@ -37,6 +38,7 @@ export default function Home() {
 
   return (
     <main className="bg-black text-white">
+      <UserProfile />
       <FloatingDock
         items={navItems}
         desktopClassName="fixed top-16 left-1/2 -translate-x-1/2"

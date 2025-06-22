@@ -5,6 +5,8 @@ import requests
 import re
 import unicodedata
 import string
+import json
+import google.generativeai as genai
 
 def summarize_taste():
     top_artists = sp.current_user_top_artists(limit=5, time_range='medium_term')
@@ -103,6 +105,9 @@ def validate_and_correct_tracks_with_spotify(tracks, user_country=None):
     """
     Validates tracks against Spotify and corrects artist names if necessary.
     Returns a list of tuples: (corrected_track_string, spotify_track_id) for valid tracks.
+
+    This version STRICTLY validates artist matches, only accepting results
+    where the artist from Spotify matches the requested artist.
     """
     corrected_tracks = []
     if not tracks:
@@ -114,35 +119,63 @@ def validate_and_correct_tracks_with_spotify(tracks, user_country=None):
             continue
         
         track_name, artist_name = match.groups()
-        
-        # First, try a precise search.
-        query = f"track:{track_name} artist:{artist_name}"
-        results = sp.search(q=query, type="track", limit=1)
-        
-        # If no results, broaden the search to just the track name.
-        if not results["tracks"]["items"]:
-            query = f"track:{track_name}"
-            results = sp.search(q=query, type="track", limit=1)
+        artist_name_norm = normalize_name(artist_name)
 
-        if results["tracks"]["items"]:
-            item = results["tracks"]["items"][0]
-            if (item.get("is_playable", True) and
-                (not user_country or user_country in item.get("available_markets", []))):
-                
-                spotify_track_name = item['name']
-                spotify_artist_names = ", ".join([a['name'] for a in item['artists']])
-                
-                corrected_track_string = f"{spotify_track_name} by {spotify_artist_names}"
-                spotify_track_id = item['id']
-                
-                corrected_tracks.append((corrected_track_string, spotify_track_id))
+        # First try precise search: track + artist
+        query = f'track:"{track_name}" artist:"{artist_name}"'
+        results = sp.search(q=query, type="track", limit=5)
+
+        # If no precise results, fallback to just track name search
+        if not results["tracks"]["items"]:
+            query = f'track:"{track_name}"'
+            results = sp.search(q=query, type="track", limit=5)
+
+        # Find best matching track where artist matches normalized artist name
+        best_match = None
+        for item in results["tracks"]["items"]:
+            if not item.get("is_playable", True):
+                continue
+            if user_country and user_country not in item.get("available_markets", []):
+                continue
+            
+            artists = item["artists"]
+            artist_names = [normalize_name(a['name']) for a in artists]
+            if artist_name_norm in artist_names:
+                best_match = item
+                break
+        
+        if best_match:
+            spotify_track_name = best_match['name']
+            spotify_artist_names = ", ".join([a['name'] for a in best_match['artists']])
+            corrected_track_string = f"{spotify_track_name} by {spotify_artist_names}"
+            spotify_track_id = best_match['id']
+            corrected_tracks.append((corrected_track_string, spotify_track_id))
+        # else: no good match, skip this track
 
     return corrected_tracks
 
-def extract_tracks_from_response(response_text):
-    # Simple regex to find lines like: 1. Song Name by Artist Name
-    pattern = r"\d+\.\s*([^\n]+? by [^\n]+)"
-    return re.findall(pattern, response_text)
+def extract_json_from_response(response_text):
+    """
+    Finds and parses a JSON object from the end of a string.
+    Returns the parsed JSON and the text before the JSON object.
+    """
+    json_start_index = response_text.rfind('```json')
+    if json_start_index == -1:
+        return None, response_text
+
+    json_str_with_ticks = response_text[json_start_index + 7:]
+    json_end_index = json_str_with_ticks.rfind('```')
+    if json_end_index == -1:
+        return None, response_text
+    
+    json_str = json_str_with_ticks[:json_end_index].strip()
+    
+    try:
+        data = json.loads(json_str)
+        conversation_part = response_text[:json_start_index].strip()
+        return data, conversation_part
+    except json.JSONDecodeError:
+        return None, response_text
 
 def fallback_spotify_recs(user_message, known_artists, known_tracks):
     # Use Spotify recommendations API, avoiding known tracks/artists
@@ -212,78 +245,70 @@ def filter_tracks_by_features(corrected_tracks_with_ids, target_features=None):
     filtered.sort(reverse=True)
     return [t_info for _, t_info in filtered]
 
-def llm_respond_with_groq(message, history=None):
-    api_key = os.getenv("GROQ_API_KEY")
+def llm_respond_with_gemini(message, history=None):
+    api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
-        return {"response": "Groq API key not set in .env."}
-    url = "https://api.groq.com/openai/v1/chat/completions"
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json"
-    }
-    # Fetch full Spotify profile and known artists/tracks for context
-    spotify_context = get_full_spotify_profile()
-    known_artists, known_tracks = get_known_artists_tracks()
-    system_prompt = (
-        "You are Lyra, a deeply insightful, emotionally intelligent music companion. "
-        "You always mirror the user's tone and personality, responding in a personable, natural, and reflective way. "
-        "You have access to the user's Spotify profile, including their top artists and tracks, which are considered 'already known' to the user: "
-        f"Artists: {', '.join(known_artists)}. Tracks: {', '.join(known_tracks)}. "
-        "When recommending music or building playlists, focus on discovery: suggest fresh, streamable Spotify tracks and artists that the user is less likely to have heard, based on their taste. "
-        "Only suggest real tracks that are currently streamable on Spotify. If unsure, skip it."
-        "Avoid repeating artists or tracks from their top lists unless specifically asked. "
-        "When building playlists, make sure the selections are either sonically similar to what the user likes or fit the requested niche/mood. "
-        "Use mood vocabulary, musical descriptors (like 'dreamy texture', 'bass-forward', 'cinematic strings'), and the occasional emoji. "
-        "Keep explanations concise, but make your recommendations feel personal and emotionally resonant. "
-        "Include the emotional tone of the music, and always sound like a thoughtful, music-loving friend. "
-        "If the user asks for a playlist, build it with variety and freshness in mind. "
-        "If you don't know something, say so honestly. "
-        f"Here is the user's Spotify profile and listening context: {spotify_context} "
-    )
-    # Build conversation history for Groq
-    messages = [{"role": "system", "content": system_prompt}]
-    if history:
-        messages.extend(history)
-    messages.append({"role": "user", "content": message})
-    data = {
-        "model": "llama3-8b-8192",  # or another Groq-supported model
-        "messages": messages
-    }
-    # Try up to 2 times to get valid tracks from LLM
-    for attempt in range(2):
-        try:
-            resp = requests.post(url, headers=headers, json=data, timeout=30)
-            resp.raise_for_status()
-            result = resp.json()
-            llm_response = result["choices"][0]["message"]["content"]
-            
-            tracks_to_validate = extract_tracks_from_response(llm_response)
-            
-            if tracks_to_validate:
-                corrected_tracks = validate_and_correct_tracks_with_spotify(tracks_to_validate)
-                
-                if len(corrected_tracks) == len(tracks_to_validate):
-                    final_tracks_with_ids = corrected_tracks
-                    target_features = extract_target_features_from_message(message)
-                    
-                    if target_features:
-                        final_tracks_with_ids = filter_tracks_by_features(corrected_tracks, target_features)
+        return {"response": "Google API key not set in .env."}
+    genai.configure(api_key=api_key)
 
-                    response_text = "Based on your request, I've found these tracks for you:"
-                    tracks_for_embed = [{"name": name, "id": id} for name, id in final_tracks_with_ids]
-                    
-                    return {"response": response_text, "tracks": tracks_for_embed}
-                else:
-                    # Some tracks failed validation/correction, ask LLM to try again
-                    data["messages"].append({"role": "assistant", "content": llm_response})
-                    data["messages"].append({"role": "system", "content": "Some of your suggestions were not found on Spotify. Please suggest only real, streamable Spotify tracks."})
-                    continue
-            else:
-                return {"response": llm_response}
-        except Exception as e:
-            return {"response": f"Error calling Groq API: {e}"}
+    model = genai.GenerativeModel('gemini-1.5-flash')
+    spotify_context = get_full_spotify_profile()
+    
+    system_prompt = (
+        "You are Lyra, a deeply insightful music companion. Your main goal is to help users discover music on Spotify. "
+        "When a user asks for song recommendations or a playlist, you MUST provide real, streamable tracks. "
+        "Your response should be conversational. After your text response, you MUST append a JSON object in a '```json' code block. "
+        "This JSON is the ONLY place track and artist names should appear. Example: "
+        "```json\n"
+        "{\n"
+        '  "recommendations": [\n'
+        '    {"track": "Song Name 1", "artist": "Artist Name 1"}\n'
+        '  ]\n'
+        "}\n"
+        "```\n"
+        "IMPORTANT: For any other question that is NOT about recommending music, respond with text ONLY and DO NOT include a JSON block. "
+        f"Here is the user's Spotify profile for context: {spotify_context}"
+    )
+
+    full_history = [{"role": "system", "content": system_prompt}]
+    if history:
+        full_history.extend(history)
+    full_history.append({"role": "user", "content": message})
+
+    gemini_history = []
+    for msg in full_history:
+        role = 'model' if msg['role'] == 'assistant' else msg['role']
+        if role == 'system': continue
+        gemini_history.append({'role': role, 'parts': [msg['content']]})
+
+    chat = model.start_chat(history=gemini_history)
+
+    try:
+        prompt_with_context = f"{system_prompt}\n\nUser message: {message}"
+        resp = chat.send_message(prompt_with_context)
+        llm_response_full = resp.text
+        
+        parsed_json, conversational_response = extract_json_from_response(llm_response_full)
+        
+        tracks_to_validate = []
+        if parsed_json and isinstance(parsed_json.get("recommendations"), list):
+            recs = parsed_json["recommendations"]
+            for rec in recs:
+                if isinstance(rec, dict) and "track" in rec and "artist" in rec:
+                    tracks_to_validate.append(f"{rec['track']} by {rec['artist']}")
+
+        if tracks_to_validate:
+            final_tracks_with_ids = validate_and_correct_tracks_with_spotify(tracks_to_validate)
             
-    # Fallback to Spotify recs if LLM fails
-    fallback_tracks = fallback_spotify_recs(message, known_artists, known_tracks)
-    fallback_text = "Here are some fresh Spotify recommendations for you:\n" + "\n".join(f"{t}" for t in fallback_tracks)
-    return {"response": fallback_text}
+            if final_tracks_with_ids:
+                target_features = extract_target_features_from_message(message)
+                if target_features:
+                    final_tracks_with_ids = filter_tracks_by_features(final_tracks_with_ids, target_features)
+
+                tracks_for_embed = [{"name": name, "id": id} for name, id in final_tracks_with_ids]
+                return {"response": conversational_response, "tracks": tracks_for_embed}
+
+        return {"response": conversational_response}
+            
+    except Exception as e:
+        return {"response": f"Error calling Gemini API: {e}"}

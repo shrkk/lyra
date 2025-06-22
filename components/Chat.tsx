@@ -4,6 +4,8 @@ import React, { useState, useRef, useEffect } from 'react';
 import ChatMessage from './ChatMessage';
 import { PlaceholdersAndVanishInput } from './ui/placeholders-and-vanish-input';
 import TypingIndicator from './TypingIndicator';
+import LoginWithSpotify from './LoginWithSpotify';
+import { supabase } from '@/lib/supabaseClient';
 
 interface Track {
   id: string;
@@ -29,6 +31,7 @@ export default function Chat() {
   ]);
   const [isTyping, setIsTyping] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
+  const [user, setUser] = useState<any>(null);
 
   const scrollToBottom = () => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
@@ -36,6 +39,7 @@ export default function Chat() {
 
   useEffect(() => {
     scrollToBottom();
+    supabase.auth.getUser().then(({ data }) => setUser(data?.user));
   }, [messages, isTyping]);
 
   const [inputValue, setInputValue] = useState('');
@@ -115,6 +119,10 @@ export default function Chat() {
     "Any new music from my favorite genre?",
     "Create a playlist for a rainy day",
   ];
+
+  if (!user) {
+    return null;
+  }
 
   return (
     <div className="bg-white/5 backdrop-blur-md rounded-2xl shadow-lg flex flex-col h-[70vh]">

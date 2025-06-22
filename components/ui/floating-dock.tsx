@@ -166,8 +166,23 @@ function IconContainer({
  
   const [hovered, setHovered] = useState(false);
  
+  // Custom click handler for Player icon
+  const handleClick = (e: React.MouseEvent<HTMLAnchorElement, MouseEvent>) => {
+    if (href === '/player') {
+      e.preventDefault();
+      if (typeof window !== 'undefined') {
+        const token = localStorage.getItem('spotify_access_token');
+        if (!token) {
+          window.location.href = '/api/auth/spotify/login';
+        } else {
+          window.location.href = '/player';
+        }
+      }
+    }
+  };
+
   return (
-    <a href={href}>
+    <a href={href} onClick={handleClick}>
       <motion.div
         ref={ref}
         style={{ width, height }}

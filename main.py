@@ -1,6 +1,6 @@
 from flask import Flask, request, jsonify
 from flask_cors import CORS
-from lyra_agent import summarize_taste, llm_respond_with_groq, recommend_music, get_profile_visualization
+from lyra_agent import summarize_taste, llm_respond_with_gemini, recommend_music, get_profile_visualization
 
 app = Flask(__name__)
 CORS(app)  # This enables CORS for all routes
@@ -15,7 +15,7 @@ def handle_chat():
     data = request.json
     user_message = data.get("message", "")
     history = data.get("history", [])
-    response = llm_respond_with_groq(user_message, history=history)
+    response = llm_respond_with_gemini(user_message, history=history)
     return jsonify(response)
 
 @app.route("/lyra/recommend", methods=["POST"])

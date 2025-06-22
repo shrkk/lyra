@@ -3,3 +3,4 @@ spotipy
 python-dotenv
 requests
 Flask-Cors
+google-generativeai

@@ -6,9 +6,12 @@ import {
   IconHome,
   IconMessage,
   IconInfoCircle,
+  IconLogin,
 } from '@tabler/icons-react';
 import Image from 'next/image';
 import ContactForm from '@/components/ui/contact-form';
+import LyraWorkflow from '@/components/ui/LyraWorkflow';
+import UserProfile from '@/components/UserProfile';
 
 export default function AboutPage() {
   const navItems = [
@@ -23,9 +26,9 @@ export default function AboutPage() {
       icon: <IconMessage className="h-6 w-6 text-white" />,
     },
     {
-        title: 'Player',
-        href: '/player',
-        icon: <Image src="/spotify.png" alt="Player" width={24} height={24} className="h-6 w-6" />,
+      title: 'Player',
+      href: 'https://open.spotify.com',
+      icon: <Image src="/spotify.png" alt="Player" width={24} height={24} className="h-5.5 w-6" />,
     },
     {
       title: 'About',
@@ -36,10 +39,11 @@ export default function AboutPage() {
 
   return (
     <main className="bg-black text-white min-h-screen">
+      <UserProfile />
       <FloatingDock
         items={navItems}
-        desktopClassName="fixed top-16 left-1/2 -translate-x-1/2"
-        mobileClassName="fixed top-16 right-4"
+        desktopClassName="fixed top-16 left-1/2 -translate-x-1/2 z-[100]"
+        mobileClassName="fixed top-16 right-4 z-[100]"
       />
       <section className="container mx-auto px-6 py-40">
         <div className="max-w-3xl mx-auto text-center">
@@ -53,6 +57,7 @@ export default function AboutPage() {
           </p>
         </div>
       </section>
+      <LyraWorkflow />
       <ContactForm />
     </main>
   );

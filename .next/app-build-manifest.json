@@ -1,36 +1,36 @@
 {
   "pages": {
     "/_not-found": [
-      "static/chunks/webpack-7595aa7bcd501b5d.js",
+      "static/chunks/webpack-7f37d577609b6bf2.js",
       "static/chunks/fd9d1056-15fd34ba6cdcb612.js",
       "static/chunks/472-342fc35de4b1ac24.js",
       "static/chunks/main-app-003b696e31720cc7.js",
       "static/chunks/app/_not-found-88ad8d29ad8d348e.js"
     ],
     "/layout": [
-      "static/chunks/webpack-7595aa7bcd501b5d.js",
+      "static/chunks/webpack-7f37d577609b6bf2.js",
       "static/chunks/fd9d1056-15fd34ba6cdcb612.js",
       "static/chunks/472-342fc35de4b1ac24.js",
       "static/chunks/main-app-003b696e31720cc7.js",
-      "static/css/d045477413330279.css",
-      "static/chunks/app/layout-91cf5a7547c6fb74.js"
-    ],
-    "/about/page": [
-      "static/chunks/webpack-7595aa7bcd501b5d.js",
-      "static/chunks/fd9d1056-15fd34ba6cdcb612.js",
-      "static/chunks/472-342fc35de4b1ac24.js",
-      "static/chunks/main-app-003b696e31720cc7.js",
-      "static/chunks/234-b64e8b4b3601d191.js",
-      "static/chunks/app/about/page-fbe7c4f253de10d2.js"
+      "static/css/c779739159535c7f.css",
+      "static/chunks/app/layout-ff96ef576e6d3b04.js"
     ],
     "/page": [
-      "static/chunks/webpack-7595aa7bcd501b5d.js",
+      "static/chunks/webpack-7f37d577609b6bf2.js",
       "static/chunks/fd9d1056-15fd34ba6cdcb612.js",
       "static/chunks/472-342fc35de4b1ac24.js",
       "static/chunks/main-app-003b696e31720cc7.js",
-      "static/chunks/234-b64e8b4b3601d191.js",
+      "static/chunks/652-079ac643ca377524.js",
       "static/chunks/337-8baf0a04eec6c3e1.js",
-      "static/chunks/app/page-d231473f9edeade1.js"
+      "static/chunks/app/page-4f0909c32e323638.js"
+    ],
+    "/about/page": [
+      "static/chunks/webpack-7f37d577609b6bf2.js",
+      "static/chunks/fd9d1056-15fd34ba6cdcb612.js",
+      "static/chunks/472-342fc35de4b1ac24.js",
+      "static/chunks/main-app-003b696e31720cc7.js",
+      "static/chunks/652-079ac643ca377524.js",
+      "static/chunks/app/about/page-e6f86c94539210e9.js"
     ]
   }
 }
