@@ -306,32 +306,54 @@ def llm_respond_with_gemini(message, history, token):
     chat = model.start_chat(history=gemini_history)
 
     try:
-        prompt_with_context = f"{system_prompt}\n\nUser message: {message}"
+        prompt_with_context = f"{system_prompt}\\n\\nUser message: {message}"
         resp = chat.send_message(prompt_with_context)
         llm_response_full = resp.text
         
         parsed_json, conversational_response = extract_json_from_response(llm_response_full)
         
         tracks_to_validate = []
+        # Check if the AI intended to send recommendations
         if parsed_json and isinstance(parsed_json.get("recommendations"), list):
             recs = parsed_json["recommendations"]
             for rec in recs:
                 if isinstance(rec, dict) and "track" in rec and "artist" in rec:
                     tracks_to_validate.append(f"{rec['track']} by {rec['artist']}")
 
-        if tracks_to_validate:
-            final_tracks_with_ids = validate_and_correct_tracks_with_spotify(tracks_to_validate, token)
-            
-            if final_tracks_with_ids:
-                target_features = extract_target_features_from_message(message)
-                if target_features:
-                    final_tracks_with_ids = filter_tracks_by_features(final_tracks_with_ids, token, target_features)
+            # If we have tracks to validate, proceed
+            if tracks_to_validate:
+                # Pass the token to the validation function
+                final_tracks_with_ids = validate_and_correct_tracks_with_spotify(tracks_to_validate, token)
+                
+                if final_tracks_with_ids:
+                    # Success case: return embeds
+                    target_features = extract_target_features_from_message(message)
+                    if target_features:
+                        final_tracks_with_ids = filter_tracks_by_features(final_tracks_with_ids, token, target_features)
 
-                tracks_for_embed = [{"name": name, "id": id} for name, id in final_tracks_with_ids]
-                return {"response": conversational_response, "tracks": tracks_for_embed}
+                    tracks_for_embed = []
+                    for name, id in final_tracks_with_ids:
+                        # Fetch track details from Spotify to get preview_url and external_urls
+                        try:
+                            track_info = get_spotify_client(token).track(id)
+                            preview_url = track_info.get('preview_url')
+                            spotify_url = track_info.get('external_urls', {}).get('spotify')
+                        except Exception:
+                            preview_url = None
+                            spotify_url = None
+                        tracks_for_embed.append({
+                            "name": name,
+                            "id": id,
+                            "preview_url": preview_url,
+                            "spotify_url": spotify_url
+                        })
+                    return {"response": conversational_response, "tracks": tracks_for_embed}
+                else:
+                    # Failure case: AI tried but tracks were invalid
+                    return {"response": "I found some potential recommendations, but couldn't confirm them on Spotify. Could you try asking in a different way?"}
 
-        fallback_tracks = fallback_spotify_recs(message, [], [])
-        return {"response": conversational_response, "fallback_tracks": fallback_tracks}
+        # If we are here, the AI did not intend to send music. Return its text response.
+        return {"response": conversational_response}
             
     except Exception as e:
         return {"response": f"Error calling Gemini API: {e}"}

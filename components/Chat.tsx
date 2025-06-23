@@ -86,27 +86,18 @@ export default function Chat() {
     setMessages(prev => [...prev, userMessage]);
     setIsTyping(true);
 
-    const { data: { session } } = await supabase.auth.getSession();
-    const accessToken = session?.provider_token;
-
-    if (!accessToken) {
-        const errorMessage: Message = {
-          id: (Date.now() + 1).toString(),
-          text: "Your session has expired. Please sign in again.",
-          isUser: false,
-          timestamp: new Date(),
-        };
-        setMessages(prev => [...prev, errorMessage]);
-        setIsTyping(false);
-        return;
-    }
-
     try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        throw new Error("User not authenticated.");
+      }
+      const token = session.provider_token;
+
       const response = await fetch('http://localhost:8888/lyra/chat', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
-          'Authorization': `Bearer ${accessToken}`,
+          'Authorization': `Bearer ${token}`,
         },
         body: JSON.stringify({ 
           message: text,

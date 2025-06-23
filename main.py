@@ -2,6 +2,7 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from dotenv import load_dotenv
 import os
+from spotipy.oauth2 import SpotifyOAuth
 
 from lyra_agent import summarize_taste, llm_respond_with_gemini, recommend_music, get_profile_visualization
 
@@ -18,16 +19,16 @@ def handle_lyra():
 
 @app.route("/lyra/chat", methods=["POST"])
 def handle_chat():
-    auth_header = request.headers.get("Authorization")
-    if not auth_header or not auth_header.startswith("Bearer "):
-        return jsonify({"error": "Authorization token is missing or invalid."}), 401
-    
-    token = auth_header.split(" ")[1]
-    
     data = request.json
     user_message = data.get("message", "")
     history = data.get("history", [])
     
+    # Get the token from the request header (or however your frontend sends it)
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return jsonify({"error": "Authorization token not found"}), 401
+    token = auth_header.split(' ')[1]
+
     response = llm_respond_with_gemini(user_message, history=history, token=token)
     return jsonify(response)
 
