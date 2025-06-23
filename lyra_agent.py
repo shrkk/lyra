@@ -271,21 +271,18 @@ def llm_respond_with_gemini(message, history, token):
     
     system_prompt = (
     "You are Lyra, a deeply insightful music companion that helps users discover music on Spotify.\n\n"
-    "When a user asks for **song recommendations or playlist creation**, ALWAYS respond with a warm, conversational summary **followed by a valid JSON block** containing real Spotify tracks.\n\n"
-    "If the user asks you to **create a playlist**, your response MUST include a JSON block with this format:\n"
+    "When a user asks for **song recommendations or playlist creation**, you MUST respond with a warm, conversational summary **followed by a valid JSON block** containing real Spotify tracks.\n\n"
+    "If you do not include the JSON block, the user will not receive any music recommendations.\n"
+    "Here is the required JSON format:\n"
     "```json\n"
     "{\n"
-    '  "playlist": {\n'
-    '    "title": "Your Playlist Title",\n'
-    '    "description": "A short description of the playlist",\n'
-    '    "tracks": [\n'
-    '      {"track": "Song Name 1", "artist": "Artist Name 1"},\n'
-    '      {"track": "Song Name 2", "artist": "Artist Name 2"}\n'
-    '    ]\n'
-    "  }\n"
+    '  "recommendations": [\n'
+    '    {"track": "Song Name 1", "artist": "Artist Name 1"},\n'
+    '    {"track": "Song Name 2", "artist": "Artist Name 2"}\n'
+    "  ]\n"
     "}\n"
     "```\n"
-    "Lyra should **embed the playlist directly in chat** using the above structure so it can be validated and streamed. Do not mention the playlist separately—only use the JSON for track data.\n\n"
+    "Do NOT respond with only text. Always include the JSON block after your summary.\n\n"
     "If the user asks general questions about their **music taste**, preferences, or habits, base your analysis on their **most recent listening activity from the last 1–2 months**, unless the user clearly asks about 'long-term' or 'all-time' history.\n\n"
     "For example, summarize top genres, favorite artists, and listening patterns using medium_term or short_term Spotify data (NOT long_term).\n\n"
     "For all NON-music related questions, respond with regular conversational text and DO NOT include any JSON.\n\n"
@@ -353,6 +350,31 @@ def llm_respond_with_gemini(message, history, token):
                     return {"response": "I found some potential recommendations, but couldn't confirm them on Spotify. Could you try asking in a different way?"}
 
         # If we are here, the AI did not intend to send music. Return its text response.
+        # BACKEND FALLBACK: If the user message is about music, try to generate recommendations anyway
+        music_keywords = ["recommend", "playlist", "song", "music", "track", "suggest"]
+        if any(kw in message.lower() for kw in music_keywords):
+            # Use fallback_spotify_recs to get track strings
+            fallback_tracks = fallback_spotify_recs(message, [], [])
+            if fallback_tracks:
+                # Validate and enrich tracks
+                final_tracks_with_ids = validate_and_correct_tracks_with_spotify(fallback_tracks, token)
+                if final_tracks_with_ids:
+                    tracks_for_embed = []
+                    for name, id in final_tracks_with_ids:
+                        try:
+                            track_info = get_spotify_client(token).track(id)
+                            preview_url = track_info.get('preview_url')
+                            spotify_url = track_info.get('external_urls', {}).get('spotify')
+                        except Exception:
+                            preview_url = None
+                            spotify_url = None
+                        tracks_for_embed.append({
+                            "name": name,
+                            "id": id,
+                            "preview_url": preview_url,
+                            "spotify_url": spotify_url
+                        })
+                    return {"response": conversational_response, "tracks": tracks_for_embed}
         return {"response": conversational_response}
             
     except Exception as e:
