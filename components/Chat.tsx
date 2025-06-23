@@ -4,7 +4,6 @@ import React, { useState, useRef, useEffect } from 'react';
 import ChatMessage from './ChatMessage';
 import { PlaceholdersAndVanishInput } from './ui/placeholders-and-vanish-input';
 import TypingIndicator from './TypingIndicator';
-import LoginWithSpotify from './LoginWithSpotify';
 import { supabase } from '@/lib/supabaseClient';
 
 interface Track {
