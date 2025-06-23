@@ -1,7 +1,6 @@
 'use client';
 import { useEffect, useState } from 'react';
 import { supabase } from '@/lib/supabaseClient';
-import LoginWithSpotify from './LoginWithSpotify';
 
 export default function UserProfile() {
   const [user, setUser] = useState<any>(null);
@@ -10,11 +9,7 @@ export default function UserProfile() {
     supabase.auth.getUser().then(({ data }) => setUser(data?.user));
   }, []);
 
-  if (!user) return (
-    <div className="fixed top-32 right-8 z-[101]">
-      <LoginWithSpotify />
-    </div>
-  );
+  if (!user) return null;
 
   const avatar = user.user_metadata?.avatar_url;
   const name = user.user_metadata?.full_name || user.user_metadata?.name || user.email;

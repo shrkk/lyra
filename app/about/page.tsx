@@ -12,6 +12,7 @@ import Image from 'next/image';
 import ContactForm from '@/components/ui/contact-form';
 import LyraWorkflow from '@/components/ui/LyraWorkflow';
 import UserProfile from '@/components/UserProfile';
+import { supabase } from '@/lib/supabaseClient';
 
 export default function AboutPage() {
   const navItems = [
@@ -26,9 +27,18 @@ export default function AboutPage() {
       icon: <IconMessage className="h-6 w-6 text-white" />,
     },
     {
-      title: 'Player',
-      href: 'https://open.spotify.com',
-      icon: <Image src="/spotify.png" alt="Player" width={24} height={24} className="h-5.5 w-6" />,
+      title: 'Login',
+      href: '#',
+      icon: <IconLogin className="h-6 w-6 text-white" />,
+      onClick: async () => {
+        await supabase.auth.signInWithOAuth({
+          provider: 'spotify',
+          options: {
+            redirectTo: process.env.NEXT_PUBLIC_SUPABASE_REDIRECT_URL || 'https://lyraai-git-main-shrkks-projects.vercel.app/auth/callback',
+            scopes: 'user-top-read user-read-recently-played playlist-read-private',
+          },
+        });
+      },
     },
     {
       title: 'About',

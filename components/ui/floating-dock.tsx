@@ -118,11 +118,13 @@ function IconContainer({
   title,
   icon,
   href,
+  onClick,
 }: {
   mouseX: MotionValue;
   title: string;
   icon: React.ReactNode;
   href: string;
+  onClick?: (e: React.MouseEvent<HTMLAnchorElement, MouseEvent>) => void;
 }) {
   let ref = useRef<HTMLDivElement>(null);
  
@@ -168,6 +170,11 @@ function IconContainer({
  
   // Custom click handler for Player icon
   const handleClick = (e: React.MouseEvent<HTMLAnchorElement, MouseEvent>) => {
+    if (onClick) {
+      e.preventDefault();
+      onClick(e);
+      return;
+    }
     if (href === '/player') {
       e.preventDefault();
       if (typeof window !== 'undefined') {
