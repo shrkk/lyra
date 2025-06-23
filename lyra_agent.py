@@ -1,5 +1,3 @@
-from spotify_client import sp
-import random
 import os
 import requests
 import re
