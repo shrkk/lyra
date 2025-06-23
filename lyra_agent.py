@@ -183,20 +183,28 @@ def extract_json_from_response(response_text):
     except json.JSONDecodeError:
         return None, response_text
 
-def fallback_spotify_recs(token, user_message, known_artists, known_tracks):
-    sp = get_spotify_client(token)
-    taste = get_full_spotify_profile(token)
-    # Use top genre or artist as seed
+def fallback_spotify_recs(user_message, known_artists, known_tracks):
+    # Use Spotify recommendations API, avoiding known tracks/artists
+    # Use top artist as a reliable seed
     top_artists, _ = get_known_artists_tracks()
-    seed_artists = top_artists[:2] if top_artists else None
+    if not top_artists:
+        # Fallback if there are no top artists for some reason
+        return ["Sorry, I couldn't get any recommendations right now. Try listening to some more music!"]
+
+    seed_artists = top_artists[:2]
     recs = sp.recommendations(seed_artists=seed_artists, limit=5)
+
     tracks = []
-    for t in recs['tracks']:
-        track_str = f"{t['name']} by {t['artists'][0]['name']}"
-        if t['name'] not in known_tracks and t['artists'][0]['name'] not in known_artists:
-            tracks.append(track_str)
+    if recs and recs['tracks']:
+        for t in recs['tracks']:
+            track_str = f"{t['name']} by {t['artists'][0]['name']}"
+            if t['name'] not in known_tracks and t['artists'][0]['name'] not in known_artists:
+                tracks.append(track_str)
+    
+    # If filtering results in an empty list, return the original recommendations
     if not tracks:
-        tracks = [f"{t['name']} by {t['artists'][0]['name']}" for t in recs['tracks']]
+        tracks = [f"{t['name']} by {t['artists'][0]['name']}" for t in recs['tracks']] if recs and recs['tracks'] else []
+
     return tracks
 
 def extract_target_features_from_message(message):
@@ -315,7 +323,7 @@ def llm_respond_with_gemini(message, history, token):
                 tracks_for_embed = [{"name": name, "id": id} for name, id in final_tracks_with_ids]
                 return {"response": conversational_response, "tracks": tracks_for_embed}
 
-        fallback_tracks = fallback_spotify_recs(token, message, [], [])
+        fallback_tracks = fallback_spotify_recs(message, [], [])
         return {"response": conversational_response, "fallback_tracks": fallback_tracks}
             
     except Exception as e:

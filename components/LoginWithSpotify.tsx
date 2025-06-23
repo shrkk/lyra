@@ -7,7 +7,7 @@ export default function LoginWithSpotify() {
       provider: 'spotify',
       options: {
         redirectTo: process.env.NEXT_PUBLIC_SUPABASE_REDIRECT_URL || 'https://lyraai-git-main-shrkks-projects.vercel.app/auth/callback',
-        scopes: 'user-read-private user-read-email user-top-read user-read-recently-played playlist-read-private offline_access',
+        scopes: 'user-top-read user-read-recently-played playlist-read-private',
       },
     });
   };
