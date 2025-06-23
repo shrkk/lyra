@@ -224,6 +224,13 @@ def extract_target_features_from_message(message):
     elif 'low energy' in message.lower() or 'chill' in message.lower():
         features['energy'] = 0.3
     return features
+def is_similarity_request(message):
+    """Returns True if user is asking for songs like a specific track or artist."""
+    keywords = [
+        "like", "similar to", "reminds me of", "same vibe as", "same energy as", "same feel as"
+    ]
+    return any(kw in message.lower() for kw in keywords)
+
 
 def filter_tracks_by_features(corrected_tracks_with_ids, token, target_features=None):
     """
@@ -299,6 +306,12 @@ def llm_respond_with_gemini(message, history, token):
         "```\n\n"
         "🚫 If you do not include the JSON block, the user will not receive any music recommendations.\n"
         "🚫 Do not fabricate track or artist names. Ensure suggestions are real and can be validated on Spotify.\n\n"
+        "🚫 Avoid highly popular, mainstream, or top-charting songs unless the user explicitly asks for popular music. Instead, surface underappreciated, emerging, or lesser-known tracks that feel fresh and undiscovered, while still aligned with the user’s taste.\n"
+        "🎯 Recommendation Count:\n"
+        "- When the user asks for “recommendations” or “songs,” return around 5 tracks by default.\n"
+        "- When the user asks for a “playlist,” return around 10 tracks by default.\n"
+        "- If the user specifies an exact number, honor that request.\n"
+        "🧭 When the user asks for “songs like [name]” or similar prompts, use audio similarity — prioritize matching tempo, energy, or instrumentation to the referenced track.\n"
         "🎵 Tempo/Energy Guidance (based on user message):\n"
         "- If they say \"fast tempo\" or \"upbeat\", aim for ~130 BPM\n"
         "- If they say \"slow tempo\", \"chill\", or \"low energy\", aim for ~80 BPM and energy ~0.3\n"
@@ -346,6 +359,9 @@ def llm_respond_with_gemini(message, history, token):
                     target_features = extract_target_features_from_message(message)
                     if target_features:
                         final_tracks_with_ids = filter_tracks_by_features(final_tracks_with_ids, token, target_features)
+                    # Extract features if not already done and it's a similarity-style prompt
+                    if not target_features and is_similarity_request(message):
+                        target_features = extract_target_features_from_message(message)
 
                     tracks_for_embed = []
                     for name, id in final_tracks_with_ids:
