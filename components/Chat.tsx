@@ -92,7 +92,7 @@ export default function Chat() {
       }
       const token = session.provider_token;
 
-      const response = await fetch('http://localhost:8888/lyra/chat', {
+      const response = await fetch(`${process.env.NEXT_PUBLIC_BACKEND_URL}/lyra/chat`, {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',

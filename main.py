@@ -47,4 +47,5 @@ def handle_profile():
     return jsonify(response)
 
 if __name__ == "__main__":
-    app.run(port=8888)
+    import os
+    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 3000)))
