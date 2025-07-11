@@ -10,7 +10,7 @@ from lyra_agent import summarize_taste, llm_respond_with_gemini, recommend_music
 load_dotenv()
 
 app = Flask(__name__)
-CORS(app, origins=["https://lyraai-git-main-shrkks-projects.vercel.app"])  # Allow only your Vercel frontend
+CORS(app, origins=["https://lyraai-git-main-shrkks-projects.vercel.app", "http://localhost:3000"])  # Allow only your Vercel frontend
 
 @app.route("/lyra", methods=["GET"])
 def handle_lyra():
