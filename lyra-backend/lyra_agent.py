@@ -47,6 +47,30 @@ def clear_user_cache(token=None):
     else:
         USER_CACHE.clear()
 
+def debug_user_data(token):
+    """Debug function to check user data status."""
+    try:
+        user_data = get_comprehensive_user_data(token)
+        cache_key = get_user_cache_key(token)
+        cache_status = "cached" if cache_key in USER_CACHE else "not cached"
+        
+        top_artists_count = 0
+        if isinstance(user_data, dict) and 'top_artists' in user_data:
+            top_artists_data = user_data['top_artists']
+            if isinstance(top_artists_data, dict) and 'medium_term' in top_artists_data:
+                top_artists_count = len(top_artists_data['medium_term'])
+        
+        return {
+            "cache_status": cache_status,
+            "cache_key": cache_key,
+            "user_data_keys": list(user_data.keys()) if isinstance(user_data, dict) else "not a dict",
+            "has_error": 'error' in user_data if isinstance(user_data, dict) else False,
+            "has_summary": 'summary' in user_data if isinstance(user_data, dict) else False,
+            "top_artists_count": top_artists_count
+        }
+    except Exception as e:
+        return {"error": str(e)}
+
 def initialize_user_session(token):
     """
     Initialize a user session by pre-loading all Spotify data into cache.
@@ -348,27 +372,50 @@ def extract_json_from_response(response_text):
 def fallback_spotify_recs(user_message, known_artists, known_tracks, token):
     # Use Spotify recommendations API, avoiding known tracks/artists
     # Use top artist as a reliable seed
-    top_artists, _ = get_known_artists_tracks(token)
-    if not top_artists:
-        # Fallback if there are no top artists for some reason
+    try:
+        user_data = get_comprehensive_user_data(token)
+        if isinstance(user_data, dict) and 'error' in user_data:
+            return ["Sorry, I couldn't get any recommendations right now. Try listening to some more music!"]
+        
+        # Get artist IDs from the cached user data
+        artist_ids = []
+        if isinstance(user_data, dict) and 'top_artists' in user_data:
+            top_artists_data = user_data['top_artists']
+            if isinstance(top_artists_data, dict) and 'medium_term' in top_artists_data:
+                top_artists = top_artists_data['medium_term']
+                if isinstance(top_artists, list) and len(top_artists) > 0:
+                    # We need to search for the artist to get their ID
+                    sp = get_spotify_client(token)
+                    for artist in top_artists[:2]:  # Use top 2 artists
+                        if isinstance(artist, dict) and 'name' in artist:
+                            try:
+                                # Search for the artist to get their ID
+                                search_results = sp.search(q=artist['name'], type='artist', limit=1)
+                                if search_results['artists']['items']:
+                                    artist_ids.append(search_results['artists']['items'][0]['id'])
+                            except Exception:
+                                continue
+        
+        if not artist_ids:
+            return ["Sorry, I couldn't get any recommendations right now. Try listening to some more music!"]
+
+        sp = get_spotify_client(token)
+        recs = sp.recommendations(seed_artists=artist_ids[:2], limit=5)
+
+        tracks = []
+        if recs and recs['tracks']:
+            for t in recs['tracks']:
+                track_str = f"{t['name']} by {t['artists'][0]['name']}"
+                if t['name'] not in known_tracks and t['artists'][0]['name'] not in known_artists:
+                    tracks.append(track_str)
+        
+        # If filtering results in an empty list, return the original recommendations
+        if not tracks:
+            tracks = [f"{t['name']} by {t['artists'][0]['name']}" for t in recs['tracks']] if recs and recs['tracks'] else []
+
+        return tracks
+    except Exception as e:
         return ["Sorry, I couldn't get any recommendations right now. Try listening to some more music!"]
-
-    sp = get_spotify_client(token)
-    seed_artists = top_artists[:2]
-    recs = sp.recommendations(seed_artists=seed_artists, limit=5)
-
-    tracks = []
-    if recs and recs['tracks']:
-        for t in recs['tracks']:
-            track_str = f"{t['name']} by {t['artists'][0]['name']}"
-            if t['name'] not in known_tracks and t['artists'][0]['name'] not in known_artists:
-                tracks.append(track_str)
-    
-    # If filtering results in an empty list, return the original recommendations
-    if not tracks:
-        tracks = [f"{t['name']} by {t['artists'][0]['name']}" for t in recs['tracks']] if recs and recs['tracks'] else []
-
-    return tracks
 
 def extract_target_features_from_message(message):
     """Extracts target tempo (BPM) and energy from the user message using regex. Returns a dict."""
@@ -563,7 +610,7 @@ def llm_respond_with_gemini(message, history, token):
 
         # If we are here, the AI did not intend to send music. Return its text response.
         # BACKEND FALLBACK: If the user message is about music, try to generate recommendations anyway
-        music_keywords = ["recommend", "playlist", "song", "music", "track", "suggest"]
+        music_keywords = ["recommend", "playlist", "song", "music", "track", "suggest", "listening", "lately", "recent"]
         if any(kw in message.lower() for kw in music_keywords):
             # Use fallback_spotify_recs to get track strings
             fallback_tracks = fallback_spotify_recs(message, [], [], token)
@@ -587,6 +634,8 @@ def llm_respond_with_gemini(message, history, token):
                             "spotify_url": spotify_url
                         })
                     return {"response": conversational_response, "tracks": tracks_for_embed}
+        
+        # If no music recommendations were generated, just return the conversational response
         return {"response": conversational_response}
             
     except Exception as e:
