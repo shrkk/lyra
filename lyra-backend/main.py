@@ -4,7 +4,7 @@ from dotenv import load_dotenv
 import os
 from spotipy.oauth2 import SpotifyOAuth
 
-from lyra_agent import summarize_taste, llm_respond_with_gemini, recommend_music, get_profile_visualization
+from lyra_agent import summarize_taste, llm_respond_with_gemini, recommend_music, get_profile_visualization, initialize_user_session
 
 # Load environment variables from .env file
 load_dotenv()
@@ -14,7 +14,24 @@ CORS(app, origins=["https://lyraai-git-main-shrkks-projects.vercel.app", "http:/
 
 @app.route("/lyra", methods=["GET"])
 def handle_lyra():
-    result = summarize_taste()
+    # This endpoint needs a token to work properly
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return jsonify({"error": "Authorization token required"}), 401
+    token = auth_header.split(' ')[1]
+    
+    result = summarize_taste(token)
+    return jsonify(result)
+
+@app.route("/lyra/init", methods=["POST"])
+def handle_init():
+    """Initialize user session and pre-load Spotify data into cache."""
+    auth_header = request.headers.get('Authorization')
+    if not auth_header or not auth_header.startswith('Bearer '):
+        return jsonify({"error": "Authorization token not found"}), 401
+    token = auth_header.split(' ')[1]
+    
+    result = initialize_user_session(token)
     return jsonify(result)
 
 @app.route("/lyra/chat", methods=["POST"])
@@ -38,12 +55,25 @@ def handle_recommend():
     mood = data.get("mood")
     genre = data.get("genre")
     activity = data.get("activity")
-    response = recommend_music(mood=mood, genre=genre, activity=activity)
+    
+    # Get token from header
+    auth_header = request.headers.get('Authorization')
+    token = None
+    if auth_header and auth_header.startswith('Bearer '):
+        token = auth_header.split(' ')[1]
+    
+    response = recommend_music(mood=mood, genre=genre, activity=activity, token=token)
     return jsonify(response)
 
 @app.route("/lyra/profile", methods=["GET"])
 def handle_profile():
-    response = get_profile_visualization()
+    # Get token from header
+    auth_header = request.headers.get('Authorization')
+    token = None
+    if auth_header and auth_header.startswith('Bearer '):
+        token = auth_header.split(' ')[1]
+    
+    response = get_profile_visualization(token=token)
     return jsonify(response)
 
 if __name__ == "__main__":

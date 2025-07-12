@@ -6,6 +6,67 @@ import string
 import json
 import google.generativeai as genai
 import spotipy
+from datetime import datetime, timedelta
+
+# Memory cache for user Spotify data
+# Structure: {user_token_hash: {"data": {...}, "timestamp": datetime, "expires": datetime}}
+USER_CACHE = {}
+CACHE_DURATION = timedelta(hours=1)  # Cache for 1 hour
+
+def get_user_cache_key(token):
+    """Generate a cache key from the user's token."""
+    return hash(token) % (2**32)  # Simple hash for cache key
+
+def get_cached_user_data(token):
+    """Get cached user data if it exists and is still valid."""
+    cache_key = get_user_cache_key(token)
+    if cache_key in USER_CACHE:
+        cache_entry = USER_CACHE[cache_key]
+        if datetime.now() < cache_entry["expires"]:
+            return cache_entry["data"]
+        else:
+            # Remove expired cache entry
+            del USER_CACHE[cache_key]
+    return None
+
+def cache_user_data(token, data):
+    """Cache user data with expiration."""
+    cache_key = get_user_cache_key(token)
+    USER_CACHE[cache_key] = {
+        "data": data,
+        "timestamp": datetime.now(),
+        "expires": datetime.now() + CACHE_DURATION
+    }
+
+def clear_user_cache(token=None):
+    """Clear cache for specific user or all users."""
+    if token:
+        cache_key = get_user_cache_key(token)
+        if cache_key in USER_CACHE:
+            del USER_CACHE[cache_key]
+    else:
+        USER_CACHE.clear()
+
+def initialize_user_session(token):
+    """
+    Initialize a user session by pre-loading all Spotify data into cache.
+    This should be called once when a user starts a conversation.
+    Returns the user data summary for immediate use.
+    """
+    try:
+        user_data = get_comprehensive_user_data(token)
+        return {
+            "success": True,
+            "summary": user_data.get('summary', ''),
+            "profile": user_data.get('profile', {}),
+            "message": "User data loaded and cached successfully"
+        }
+    except Exception as e:
+        return {
+            "success": False,
+            "error": str(e),
+            "message": "Failed to load user data"
+        }
 
 def get_spotify_client(token):
     """Creates a Spotipy client for a given user token."""
@@ -26,21 +87,33 @@ def summarize_taste(token):
         "top_genre": top_genre
     }
 
-def recommend_music(mood=None, genre=None, activity=None):
+def recommend_music(mood=None, genre=None, activity=None, token=None):
     # Use Spotify recommendations endpoint for demo
     seed_genres = []
     if genre:
         seed_genres.append(genre)
     else:
         # fallback to user's top genre
-        taste = summarize_taste()
-        seed_genres.append(taste['top_genre'])
+        if token:
+            taste = summarize_taste(token)
+            seed_genres.append(taste['top_genre'])
+        else:
+            return {"recommendations": [], "used_genre": "unknown"}
+    
+    if not token:
+        return {"recommendations": [], "used_genre": seed_genres[0] if seed_genres else "unknown"}
+    
+    sp = get_spotify_client(token)
     recs = sp.recommendations(seed_genres=seed_genres[:1], limit=5)
     tracks = [f"{t['name']} by {t['artists'][0]['name']}" for t in recs['tracks']]
     return {"recommendations": tracks, "used_genre": seed_genres[0]}
 
-def get_profile_visualization():
+def get_profile_visualization(token=None):
     # Return genre and artist breakdowns
+    if not token:
+        return {"top_artists": [], "genre_breakdown": {}}
+    
+    sp = get_spotify_client(token)
     top_artists = sp.current_user_top_artists(limit=10, time_range='medium_term')
     artist_names = [artist['name'] for artist in top_artists['items']]
     genres = [genre for artist in top_artists['items'] for genre in artist['genres']]
@@ -52,49 +125,138 @@ def get_profile_visualization():
         "genre_breakdown": genre_freq
     }
 
-def get_full_spotify_profile(token):
+def get_comprehensive_user_data(token):
+    """
+    Fetch comprehensive user data from Spotify and cache it.
+    This function should be called once at the start of a conversation.
+    """
+    # Check cache first
+    cached_data = get_cached_user_data(token)
+    if cached_data:
+        return cached_data
+    
     sp = get_spotify_client(token)
     try:
+        # Basic profile
         profile = sp.current_user()
         display_name = profile.get('display_name', 'Unknown')
         country = profile.get('country', 'Unknown')
-        # Top artists
-        top_artists = sp.current_user_top_artists(limit=5, time_range='long_term')
-        artist_names = [artist['name'] for artist in top_artists['items']]
-        artist_genres = [genre for artist in top_artists['items'] for genre in artist['genres']]
-        # Top tracks
-        top_tracks = sp.current_user_top_tracks(limit=5, time_range='long_term')
-        track_names = [f"{track['name']} by {track['artists'][0]['name']}" for track in top_tracks['items']]
+        
+        # Top artists (long term)
+        top_artists_long = sp.current_user_top_artists(limit=10, time_range='long_term')
+        top_artists_medium = sp.current_user_top_artists(limit=10, time_range='medium_term')
+        top_artists_short = sp.current_user_top_artists(limit=10, time_range='short_term')
+        
+        # Top tracks (long term)
+        top_tracks_long = sp.current_user_top_tracks(limit=10, time_range='long_term')
+        top_tracks_medium = sp.current_user_top_tracks(limit=10, time_range='medium_term')
+        top_tracks_short = sp.current_user_top_tracks(limit=10, time_range='short_term')
+        
         # Recently played
-        recent = sp.current_user_recently_played(limit=5)
-        recent_tracks = [f"{item['track']['name']} by {item['track']['artists'][0]['name']}" for item in recent['items']]
+        recent = sp.current_user_recently_played(limit=20)
+        
         # Playlists
-        playlists = sp.current_user_playlists(limit=5)
-        playlist_names = [pl['name'] for pl in playlists['items']]
-        # Genre frequency
+        playlists = sp.current_user_playlists(limit=10)
+        
+        # Process and structure the data
+        user_data = {
+            "profile": {
+                "display_name": display_name,
+                "country": country
+            },
+            "top_artists": {
+                "long_term": [{"name": artist['name'], "genres": artist['genres']} for artist in top_artists_long['items']],
+                "medium_term": [{"name": artist['name'], "genres": artist['genres']} for artist in top_artists_medium['items']],
+                "short_term": [{"name": artist['name'], "genres": artist['genres']} for artist in top_artists_short['items']]
+            },
+            "top_tracks": {
+                "long_term": [{"name": track['name'], "artist": track['artists'][0]['name']} for track in top_tracks_long['items']],
+                "medium_term": [{"name": track['name'], "artist": track['artists'][0]['name']} for track in top_tracks_medium['items']],
+                "short_term": [{"name": track['name'], "artist": track['artists'][0]['name']} for track in top_tracks_short['items']]
+            },
+            "recently_played": [{"name": item['track']['name'], "artist": item['track']['artists'][0]['name']} for item in recent['items']],
+            "playlists": [{"name": pl['name'], "id": pl['id']} for pl in playlists['items']],
+            "genre_analysis": {},
+            "summary": ""
+        }
+        
+        # Analyze genres across all time periods
+        all_genres = []
+        for time_period in ['long_term', 'medium_term', 'short_term']:
+            for artist in user_data['top_artists'][time_period]:
+                all_genres.extend(artist['genres'])
+        
         genre_freq = {}
-        for g in artist_genres:
-            genre_freq[g] = genre_freq.get(g, 0) + 1
-        top_genres = sorted(genre_freq, key=genre_freq.get, reverse=True)[:3]
-        # Compose summary
-        summary = (
+        for genre in all_genres:
+            genre_freq[genre] = genre_freq.get(genre, 0) + 1
+        
+        user_data['genre_analysis'] = {
+            'frequency': genre_freq,
+            'top_genres': sorted(genre_freq.keys(), key=lambda x: genre_freq[x], reverse=True)[:5]
+        }
+        
+        # Create summary for LLM
+        top_artists_names = [artist['name'] for artist in user_data['top_artists']['medium_term'][:5]]
+        top_tracks_names = [f"{track['name']} by {track['artist']}" for track in user_data['top_tracks']['medium_term'][:5]]
+        recent_tracks_names = [f"{track['name']} by {track['artist']}" for track in user_data['recently_played'][:5]]
+        playlist_names = [pl['name'] for pl in user_data['playlists'][:5]]
+        
+        user_data['summary'] = (
             f"Spotify profile for {display_name} (Country: {country}).\n"
-            f"Top artists: {', '.join(artist_names)}.\n"
-            f"Top genres: {', '.join(top_genres)}.\n"
-            f"Top tracks: {', '.join(track_names)}.\n"
-            f"Recently played: {', '.join(recent_tracks)}.\n"
+            f"Top artists: {', '.join(top_artists_names)}.\n"
+            f"Top genres: {', '.join(user_data['genre_analysis']['top_genres'][:3])}.\n"
+            f"Top tracks: {', '.join(top_tracks_names)}.\n"
+            f"Recently played: {', '.join(recent_tracks_names)}.\n"
             f"Playlists: {', '.join(playlist_names)}."
         )
-        return summary
+        
+        # Cache the data
+        cache_user_data(token, user_data)
+        return user_data
+        
     except Exception as e:
-        return f"(Could not fetch full Spotify profile: {e})"
+        return {
+            "error": f"Could not fetch Spotify profile: {e}",
+            "summary": f"(Could not fetch full Spotify profile: {e})"
+        }
 
-def get_known_artists_tracks():
+def get_full_spotify_profile(token):
+    """
+    Legacy function for backward compatibility.
+    Now uses cached data if available.
+    """
+    user_data = get_comprehensive_user_data(token)
+    return user_data.get('summary', user_data.get('error', 'Unknown error'))
+
+def get_known_artists_tracks(token):
+    """
+    Get known artists and tracks from cached user data.
+    """
     try:
-        top_artists = sp.current_user_top_artists(limit=10, time_range='long_term')
-        artist_names = [artist['name'] for artist in top_artists['items']]
-        top_tracks = sp.current_user_top_tracks(limit=10, time_range='long_term')
-        track_names = [f"{track['name']} by {track['artists'][0]['name']}" for track in top_tracks['items']]
+        user_data = get_comprehensive_user_data(token)
+        if isinstance(user_data, dict) and 'error' in user_data:
+            return [], []
+        
+        # Extract artist names and track names safely
+        artist_names = []
+        track_names = []
+        
+        # Handle artist data
+        if isinstance(user_data, dict) and 'top_artists' in user_data:
+            top_artists_data = user_data['top_artists']
+            if isinstance(top_artists_data, dict) and 'medium_term' in top_artists_data:
+                top_artists = top_artists_data['medium_term']
+                if isinstance(top_artists, list):
+                    artist_names = [artist['name'] for artist in top_artists if isinstance(artist, dict) and 'name' in artist]
+        
+        # Handle track data
+        if isinstance(user_data, dict) and 'top_tracks' in user_data:
+            top_tracks_data = user_data['top_tracks']
+            if isinstance(top_tracks_data, dict) and 'medium_term' in top_tracks_data:
+                top_tracks = top_tracks_data['medium_term']
+                if isinstance(top_tracks, list):
+                    track_names = [f"{track['name']} by {track['artist']}" for track in top_tracks if isinstance(track, dict) and 'name' in track and 'artist' in track]
+        
         return artist_names, track_names
     except Exception as e:
         return [], []
@@ -183,14 +345,15 @@ def extract_json_from_response(response_text):
     except json.JSONDecodeError:
         return None, response_text
 
-def fallback_spotify_recs(user_message, known_artists, known_tracks):
+def fallback_spotify_recs(user_message, known_artists, known_tracks, token):
     # Use Spotify recommendations API, avoiding known tracks/artists
     # Use top artist as a reliable seed
-    top_artists, _ = get_known_artists_tracks()
+    top_artists, _ = get_known_artists_tracks(token)
     if not top_artists:
         # Fallback if there are no top artists for some reason
         return ["Sorry, I couldn't get any recommendations right now. Try listening to some more music!"]
 
+    sp = get_spotify_client(token)
     seed_artists = top_artists[:2]
     recs = sp.recommendations(seed_artists=seed_artists, limit=5)
 
@@ -274,28 +437,33 @@ def llm_respond_with_gemini(message, history, token):
     genai.configure(api_key=api_key)
 
     model = genai.GenerativeModel('gemini-1.5-flash')
-    spotify_context = get_full_spotify_profile(token)
+    
+    # Get cached user data (this will fetch from cache if available, or fetch and cache if not)
+    user_data = get_comprehensive_user_data(token)
+    spotify_context = user_data.get('summary', user_data.get('error', 'Unknown error'))
     
     system_prompt = (
-        "You are Lyra, a deeply insightful music companion that helps users discover music on Spotify.\n\n"
-        "🎯 Your primary mission is to help users discover *new* music they haven’t heard before that aligns with their unique listening taste.\n\n"
-        "You must:\n"
-        "- Prioritize **novelty**: Avoid recommending artists or tracks already present in the user's Spotify history (e.g. top artists, top tracks, recent plays).\n"
-        "- Focus on **similarity in vibe, tempo, energy, or genre**, but aim for variety in artist, language, or instrumentation.\n"
-        "- Reason from the user's musical traits — e.g., average tempo, energy level, genre frequency.\n"
-        "- Write in a warm, curator-style tone — make your recommendations feel thoughtful, personal, and vivid.\n\n"
-        "🧠 Use the user’s Spotify data (provided below) to extract musical insights:\n"
-        "- Preferred genres\n"
-        "- Average tempo and energy\n"
-        "- Mood tendencies (e.g., chill, upbeat, melancholic)\n"
-        "- Favorite artists (to be avoided in recommendations)\n\n"
-        "💡 When recommending music, you may briefly mention how a song fits the user’s taste (e.g., tempo, mood, instrumentation), but avoid repeating direct references to the user’s Spotify history or top artists more than once early in the conversation unless otherwise asked for. \n"
-        '- "This track has the dreamy tempo and layered guitars you love in The 1975."\n'
-        '- "This song carries a mellow indie-pop feel with a slower BPM like Phoebe Bridgers’ work."\n\n'
-        " After the first few turns, respond as if you intuitively understand the user’s taste. Keep your tone warm, confident, and natural — like a friend sharing good music rather than explaining an algorithm."
-        "📦 You MUST respond with:\n"
-        "1. A **natural-language conversational summary**\n"
-        "2. A **valid JSON block** formatted exactly like this:\n\n"
+        "You are Lyra, an emotionally intelligent music companion who curates deeply personal, handpicked Spotify recommendations.\n\n"
+
+        "🧭 YOUR MISSION:\n"
+        "- Help users discover truly *new* and *underappreciated* music.\n"
+        "- Avoid anything popular or trending unless explicitly requested.\n"
+        "- Capture the **ambiance, tonality, emotional undercurrent, and texture** of the user's recent (1–3 month) listening patterns.\n\n"
+
+        "🎧 BEHAVIOR GUIDELINES:\n"
+        "- DO NOT recommend artists or tracks found in the user's top artists, top tracks, or recent plays.\n"
+        "- Focus instead on lesser-known tracks that *feel* like the user's taste — e.g., similar tempo, instrumentation, mood, or vocal style.\n"
+        "- Choose songs with **emotional alignment**, not just genre or popularity overlap.\n"
+        "- Prioritize **non-mainstream**, emerging, international, or overlooked artists — ideally those with under-the-radar followings.\n\n"
+
+        "🎨 TONE OF VOICE:\n"
+        "- Write as a warm, thoughtful, perceptive curator — like a close friend sharing a hidden gem.\n"
+        "- Use vivid, emotionally intelligent language that speaks to the *feel* of a song: melancholic piano, glitched-out vocals, dreamlike synths, hushed intimacy, lush orchestration.\n"
+        "- Do not sound robotic or algorithmic — always write like a human with taste.\n\n"
+
+        "📦 RESPONSE FORMAT:\n"
+        "1. Start with a brief, conversational recommendation message (~2–3 sentences).\n"
+        "2. Follow with a valid JSON block like this:\n"
         "```json\n"
         "{\n"
         '  "recommendations": [\n'
@@ -303,23 +471,32 @@ def llm_respond_with_gemini(message, history, token):
         '    {"track": "Song Name 2", "artist": "Artist Name 2"}\n'
         "  ]\n"
         "}\n"
-        "```\n\n"
-        "🚫 If you do not include the JSON block, the user will not receive any music recommendations.\n"
-        "🚫 Do not fabricate track or artist names. Ensure suggestions are real and can be validated on Spotify.\n\n"
-        "🚫 Avoid highly popular, mainstream, or top-charting songs unless the user explicitly asks for popular music. Instead, surface underappreciated, emerging, or lesser-known tracks that feel fresh and undiscovered, while still aligned with the user’s taste.\n"
-        "🎯 Recommendation Count:\n"
-        "- When the user asks for “recommendations” or “songs,” return around 5 tracks by default.\n"
-        "- When the user asks for a “playlist,” return around 10 tracks by default.\n"
-        "- If the user specifies an exact number, honor that request.\n"
-        "🧭 When the user asks for “songs like [name]” or similar prompts, use audio similarity — prioritize matching tempo, energy, or instrumentation to the referenced track.\n"
-        "🎵 Tempo/Energy Guidance (based on user message):\n"
-        "- If they say \"fast tempo\" or \"upbeat\", aim for ~130 BPM\n"
-        "- If they say \"slow tempo\", \"chill\", or \"low energy\", aim for ~80 BPM and energy ~0.3\n"
-        "- If the user specifies a BPM or mood, match it as closely as possible.\n\n"
-        "💬 If the user asks general questions about their **music taste**, summarize recent activity (past 1–2 months), unless they explicitly request *long-term* or *all-time* data.\n\n"
-        "🔍 For non-music topics, respond conversationally **without JSON**.\n\n"
-        f"Here is the user's Spotify profile for context: {spotify_context}"
+        "```\n"
+        "⚠️ If no good matches are found, explain gently and ask the user to adjust input — but still provide an empty JSON block.\n\n"
+
+        "🛑 DO NOT:\n"
+        "- Recommend charting artists (Top 100 or editorial playlist regulars)\n"
+        "- Repeat artists already known to the user\n"
+        "- Generate fake song or artist names\n\n"
+
+        "🎵 TEMPO & MOOD GUIDANCE:\n"
+        "- Match terms like 'chill', 'slow tempo', 'sad', etc. to songs with ~80 BPM and low energy (~0.3)\n"
+        "- Match 'upbeat', 'dancey', etc. to ~130 BPM, energy > 0.7\n"
+        "- Consider instrumentation (e.g., lo-fi textures, ambient layers, acoustic tones) over genre labels\n\n"
+
+        "📊 USER PROFILE INTERPRETATION:\n"
+        "- Use recent 1–3 month Spotify data to infer emotional trends, genre leanings, tempo/energy averages\n"
+        "- Only reference user history **briefly** and **sparingly** — 1–2 times per session unless asked\n"
+
+        "💬 VOICE EXAMPLES:\n"
+        '- “You’ve been vibing with moody, synth-washed ballads lately — here’s something in that spirit but a little off the radar.”\n'
+        '- “This one has a similar hush and warmth to what you’ve been spinning at night — think vintage keys and foggy vocals.”\n'
+
+        "🌐 For non-music questions, respond conversationally — skip JSON.\n\n"
+
+        f"Here is the user's Spotify profile: {spotify_context}"
     )
+
 
     full_history = [{"role": "system", "content": system_prompt}]
     if history:
@@ -389,7 +566,7 @@ def llm_respond_with_gemini(message, history, token):
         music_keywords = ["recommend", "playlist", "song", "music", "track", "suggest"]
         if any(kw in message.lower() for kw in music_keywords):
             # Use fallback_spotify_recs to get track strings
-            fallback_tracks = fallback_spotify_recs(message, [], [])
+            fallback_tracks = fallback_spotify_recs(message, [], [], token)
             if fallback_tracks:
                 # Validate and enrich tracks
                 final_tracks_with_ids = validate_and_correct_tracks_with_spotify(fallback_tracks, token)
