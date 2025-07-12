@@ -297,8 +297,7 @@ def validate_and_correct_tracks_with_spotify(tracks, token, user_country=None):
     Validates tracks against Spotify and corrects artist names if necessary.
     Returns a list of tuples: (corrected_track_string, spotify_track_id) for valid tracks.
 
-    This version STRICTLY validates artist matches, only accepting results
-    where the artist from Spotify matches the requested artist.
+    This version uses more flexible matching to handle AI-generated recommendations.
     """
     sp = get_spotify_client(token)
     corrected_tracks = []
@@ -313,28 +312,69 @@ def validate_and_correct_tracks_with_spotify(tracks, token, user_country=None):
         track_name, artist_name = match.groups()
         artist_name_norm = normalize_name(artist_name)
 
-        # First try precise search: track + artist
+        # Try multiple search strategies
+        best_match = None
+        
+        # Strategy 1: Precise search with track and artist
         query = f'track:"{track_name}" artist:"{artist_name}"'
         results = sp.search(q=query, type="track", limit=5)
-
-        # If no precise results, fallback to just track name search
-        if not results["tracks"]["items"]:
+        
+        if results["tracks"]["items"]:
+            for item in results["tracks"]["items"]:
+                if not item.get("is_playable", True):
+                    continue
+                if user_country and user_country not in item.get("available_markets", []):
+                    continue
+                
+                artists = item["artists"]
+                artist_names = [normalize_name(a['name']) for a in artists]
+                if artist_name_norm in artist_names:
+                    best_match = item
+                    break
+        
+        # Strategy 2: Track name only search
+        if not best_match:
             query = f'track:"{track_name}"'
-            results = sp.search(q=query, type="track", limit=5)
-
-        # Find best matching track where artist matches normalized artist name
-        best_match = None
-        for item in results["tracks"]["items"]:
-            if not item.get("is_playable", True):
-                continue
-            if user_country and user_country not in item.get("available_markets", []):
-                continue
+            results = sp.search(q=query, type="track", limit=10)
             
-            artists = item["artists"]
-            artist_names = [normalize_name(a['name']) for a in artists]
-            if artist_name_norm in artist_names:
-                best_match = item
-                break
+            for item in results["tracks"]["items"]:
+                if not item.get("is_playable", True):
+                    continue
+                if user_country and user_country not in item.get("available_markets", []):
+                    continue
+                
+                # More flexible artist matching
+                artists = item["artists"]
+                artist_names = [normalize_name(a['name']) for a in artists]
+                
+                # Check for partial matches or similar names
+                if (artist_name_norm in artist_names or 
+                    any(artist_name_norm in name or name in artist_name_norm for name in artist_names) or
+                    any(len(set(artist_name_norm) & set(name)) > len(artist_name_norm) * 0.7 for name in artist_names)):
+                    best_match = item
+                    break
+        
+        # Strategy 3: Artist name search with track name check
+        if not best_match:
+            query = f'artist:"{artist_name}"'
+            results = sp.search(q=query, type="track", limit=20)
+            
+            for item in results["tracks"]["items"]:
+                if not item.get("is_playable", True):
+                    continue
+                if user_country and user_country not in item.get("available_markets", []):
+                    continue
+                
+                # Check if track name is similar
+                spotify_track_name = normalize_name(item['name'])
+                original_track_name = normalize_name(track_name)
+                
+                if (spotify_track_name == original_track_name or
+                    spotify_track_name in original_track_name or
+                    original_track_name in spotify_track_name or
+                    len(set(spotify_track_name) & set(original_track_name)) > len(original_track_name) * 0.6):
+                    best_match = item
+                    break
         
         if best_match:
             spotify_track_name = best_match['name']
@@ -342,7 +382,6 @@ def validate_and_correct_tracks_with_spotify(tracks, token, user_country=None):
             corrected_track_string = f"{spotify_track_name} by {spotify_artist_names}"
             spotify_track_id = best_match['id']
             corrected_tracks.append((corrected_track_string, spotify_track_id))
-        # else: no good match, skip this track
 
     return corrected_tracks
 
@@ -377,15 +416,56 @@ def fallback_spotify_recs(user_message, known_artists, known_tracks, token):
         if isinstance(user_data, dict) and 'error' in user_data:
             return ["Sorry, I couldn't get any recommendations right now. Try listening to some more music!"]
         
-        # Get artist IDs from the cached user data
+        sp = get_spotify_client(token)
+        
+        # Check if user is asking for a specific genre
+        genre_keywords = {
+            "hyperpop": "hyperpop",
+            "pop": "pop",
+            "rock": "rock",
+            "hip hop": "hip-hop",
+            "rap": "hip-hop",
+            "electronic": "electronic",
+            "edm": "electronic",
+            "indie": "indie",
+            "alternative": "alternative",
+            "r&b": "r-n-b",
+            "rnb": "r-n-b",
+            "jazz": "jazz",
+            "classical": "classical",
+            "country": "country",
+            "folk": "folk",
+            "metal": "metal",
+            "punk": "punk",
+            "reggae": "reggae",
+            "blues": "blues"
+        }
+        
+        # Look for genre in the message
+        message_lower = user_message.lower()
+        target_genre = None
+        for keyword, spotify_genre in genre_keywords.items():
+            if keyword in message_lower:
+                target_genre = spotify_genre
+                break
+        
+        if target_genre:
+            # Use genre-based recommendations
+            try:
+                recs = sp.recommendations(seed_genres=[target_genre], limit=10)
+                if recs and recs['tracks']:
+                    tracks = [f"{t['name']} by {t['artists'][0]['name']}" for t in recs['tracks']]
+                    return tracks
+            except Exception:
+                pass  # Fall back to artist-based recommendations
+        
+        # Get artist IDs from the cached user data for artist-based recommendations
         artist_ids = []
         if isinstance(user_data, dict) and 'top_artists' in user_data:
             top_artists_data = user_data['top_artists']
             if isinstance(top_artists_data, dict) and 'medium_term' in top_artists_data:
                 top_artists = top_artists_data['medium_term']
                 if isinstance(top_artists, list) and len(top_artists) > 0:
-                    # We need to search for the artist to get their ID
-                    sp = get_spotify_client(token)
                     for artist in top_artists[:2]:  # Use top 2 artists
                         if isinstance(artist, dict) and 'name' in artist:
                             try:
@@ -399,8 +479,7 @@ def fallback_spotify_recs(user_message, known_artists, known_tracks, token):
         if not artist_ids:
             return ["Sorry, I couldn't get any recommendations right now. Try listening to some more music!"]
 
-        sp = get_spotify_client(token)
-        recs = sp.recommendations(seed_artists=artist_ids[:2], limit=5)
+        recs = sp.recommendations(seed_artists=artist_ids[:2], limit=10)
 
         tracks = []
         if recs and recs['tracks']:
@@ -498,7 +577,7 @@ def llm_respond_with_gemini(message, history, token):
         "- Capture the **ambiance, tonality, emotional undercurrent, and texture** of the user's recent (1–3 month) listening patterns.\n\n"
 
         "🎧 BEHAVIOR GUIDELINES:\n"
-        "- DO NOT recommend artists or tracks found in the user's top artists, top tracks, or recent plays.\n"
+        "- DO NOT recommend artists or tracks found in the user's top artists, top tracks, or recent plays (unless specifically asked for recent taste).\n"
         "- Focus instead on lesser-known tracks that *feel* like the user's taste — e.g., similar tempo, instrumentation, mood, or vocal style.\n"
         "- Choose songs with **emotional alignment**, not just genre or popularity overlap.\n"
         "- Prioritize **non-mainstream**, emerging, international, or overlooked artists — ideally those with under-the-radar followings.\n\n"
@@ -506,7 +585,8 @@ def llm_respond_with_gemini(message, history, token):
         "🎨 TONE OF VOICE:\n"
         "- Write as a warm, thoughtful, perceptive curator — like a close friend sharing a hidden gem.\n"
         "- Use vivid, emotionally intelligent language that speaks to the *feel* of a song: melancholic piano, glitched-out vocals, dreamlike synths, hushed intimacy, lush orchestration.\n"
-        "- Do not sound robotic or algorithmic — always write like a human with taste.\n\n"
+        "- Do not sound robotic or algorithmic — always write like a human with taste.\n"
+        "- Be SPECIFIC and FOCUSED — avoid generic, flowery responses about 'diverse palettes' or 'musical journeys'.\n\n"
 
         "📦 RESPONSE FORMAT:\n"
         "1. Start with a brief, conversational recommendation message (~2–3 sentences).\n"
@@ -521,10 +601,17 @@ def llm_respond_with_gemini(message, history, token):
         "```\n"
         "⚠️ If no good matches are found, explain gently and ask the user to adjust input — but still provide an empty JSON block.\n\n"
 
+        "🎵 PLAYLIST & RECOMMENDATION RULES:\n"
+        "- For playlist requests: Generate 7-10 songs (not just 5)\n"
+        "- For genre requests: Focus on 1-2 specific genres, not broad 'diverse palettes'\n"
+        "- For top tracks/genres questions: Give specific, actionable answers\n"
+        "- Avoid generic responses like 'your musical journey is fascinating' or 'diverse palette'\n\n"
+
         "🛑 DO NOT:\n"
         "- Recommend charting artists (Top 100 or editorial playlist regulars)\n"
-        "- Repeat artists already known to the user\n"
-        "- Generate fake song or artist names\n\n"
+        "- Repeat artists already known to the user (unless asked for recent taste)\n"
+        "- Generate fake song or artist names\n"
+        "- Give generic, flowery responses about 'musical journeys' or 'diverse palettes'\n\n"
 
         "🎵 TEMPO & MOOD GUIDANCE:\n"
         "- Match terms like 'chill', 'slow tempo', 'sad', etc. to songs with ~80 BPM and low energy (~0.3)\n"
@@ -534,10 +621,12 @@ def llm_respond_with_gemini(message, history, token):
         "📊 USER PROFILE INTERPRETATION:\n"
         "- Use recent 1–3 month Spotify data to infer emotional trends, genre leanings, tempo/energy averages\n"
         "- Only reference user history **briefly** and **sparingly** — 1–2 times per session unless asked\n"
+        "- When asked about top tracks/genres: Give specific, focused answers, not generic praise\n\n"
 
         "💬 VOICE EXAMPLES:\n"
-        '- “You’ve been vibing with moody, synth-washed ballads lately — here’s something in that spirit but a little off the radar.”\n'
-        '- “This one has a similar hush and warmth to what you’ve been spinning at night — think vintage keys and foggy vocals.”\n'
+        '- "Here are 8 hyperpop gems that capture that high-energy rush you love."\n'
+        '- "Your top genre is hyperpop (45% of your listening), followed by rap (30%)."\n'
+        '- "You’ve been spinning a lot of Charli XCX and 100 gecs lately — here’s something in that vein."\n'
 
         "🌐 For non-music questions, respond conversationally — skip JSON.\n\n"
 
@@ -610,14 +699,14 @@ def llm_respond_with_gemini(message, history, token):
 
         # If we are here, the AI did not intend to send music. Return its text response.
         # BACKEND FALLBACK: If the user message is about music, try to generate recommendations anyway
-        music_keywords = ["recommend", "playlist", "song", "music", "track", "suggest", "listening", "lately", "recent"]
+        music_keywords = ["recommend", "playlist", "song", "music", "track", "suggest", "listening", "lately", "recent", "hyperpop", "genre"]
         if any(kw in message.lower() for kw in music_keywords):
             # Use fallback_spotify_recs to get track strings
             fallback_tracks = fallback_spotify_recs(message, [], [], token)
-            if fallback_tracks:
+            if fallback_tracks and len(fallback_tracks) > 0:
                 # Validate and enrich tracks
                 final_tracks_with_ids = validate_and_correct_tracks_with_spotify(fallback_tracks, token)
-                if final_tracks_with_ids:
+                if final_tracks_with_ids and len(final_tracks_with_ids) > 0:
                     tracks_for_embed = []
                     for name, id in final_tracks_with_ids:
                         try:
@@ -634,6 +723,12 @@ def llm_respond_with_gemini(message, history, token):
                             "spotify_url": spotify_url
                         })
                     return {"response": conversational_response, "tracks": tracks_for_embed}
+                else:
+                    # If validation failed, try a more direct approach
+                    return {"response": f"{conversational_response}\n\nI'd love to recommend some {message.lower().split()[-1]} music! Let me search for some great tracks in that genre for you."}
+            else:
+                # If fallback failed, provide a helpful response
+                return {"response": f"{conversational_response}\n\nI'd be happy to recommend some music! Could you tell me a bit more about what you're looking for?"}
         
         # If no music recommendations were generated, just return the conversational response
         return {"response": conversational_response}
